@@ -21,7 +21,7 @@
 ##############################################################################
 
 # FIXME remove logger lines or change to debug
- 
+
 from osv import fields, osv
 import netsvc
 from tools.translate import _
@@ -58,7 +58,8 @@ class stock_picking(osv.osv):
             if pick.stock_journal_id and not pick.stock_journal_id.reopen_posted:
                 raise osv.except_osv(_('Error'), _('You cannot reset to draft pickings of this journal ! Please check "Allow Update of Posted Pickings" in Warehous Configuration / Stock Journals %s') % pick.stock_journal_id.name )
             if pick.type=='out' and pick.state=='done':
-                raise osv.except_osv(_('Error'), _('Deliver pickings %s is on state done, you cannot reset to draft ! '  %(pick.name)) )
+                message = _('You are trying to re-open or cancel the picking %s with the action you just did, and it is on state done, you cannot reset it to draft or cancel it, I recomend you return the picking and start a new one from the normal process! '  %(pick.name))
+                raise osv.except_osv(_('Error'), message)
             if pick._columns.get('invoice_ids'):
                 _logger.debug('FGF picking allow open inv_ids ')
                 ids2 = []
@@ -67,11 +68,10 @@ class stock_picking(osv.osv):
                         if inv.state in ['cancel']:
                             pass
                         elif inv.state in ['draft']:
-                            ids2.append(inv.id) 
+                            ids2.append(inv.id)
                         else:
-                            raise osv.except_osv(_('Error'), _('You cannot reset a picking with an open invoice [%s] to draft ! You must reopen the invoice first (install modul account_invoice_reopen' % inv.number))
-                    #account_invoice_obj.unlink(cr, uid, ids2) 
-                    #account_invoice_obj.write(cr, uid, ids2, {'state':'cancel'})
+                            invoices = ' '.join([i.name for i in pick.invoice_ids])
+                            raise osv.except_osv(_('Error'), _('You cannot reset picking [%s] with this opened invoices related to it [%s]  ! You must reopen the invoice first (ask for the module account_invoice_reopen)' % inv.number, invoices))
                     account_invoice_obj.action_cancel(cr, uid, ids2 )
                     if ids2:
                         self.write(cr, uid, [pick.id], {'invoice_state':'2binvoiced'})
@@ -81,7 +81,7 @@ class stock_picking(osv.osv):
             if pick.move_lines:
                 for move in pick.move_lines:
                     # FIXME - not sure if date or id has to be checked or both if average price is used
-                    # FGF 20121130 date_expected 
+                    # FGF 20121130 date_expected
                     if move.product_id.cost_method == 'average':
                         later_ids = move_line_obj.search(cr, uid, [('product_id','=',move.product_id.id),('state','=','done'),('date_expected','>',move.date),('price_unit','!=',move.price_unit),('company_id','=',move.company_id.id)])
                         if later_ids:
@@ -90,7 +90,7 @@ class stock_picking(osv.osv):
                             later_prices.append(later_move.price_unit)
                             raise osv.except_osv(_('Error'), _('You cannot reopen this picking, because product "%s" of this picking has already later posted moves with different cost price(s) %s  then the current [%s] to be reopened! Recalculation of avarage price is not supported') % (move.product_id.name, later_prices, move.price_unit))
         return True
-    
+
 
     def action_reopen(self, cr, uid, ids, context=None):
         """ Changes picking and move state from done to confirmed.
@@ -99,7 +99,6 @@ class stock_picking(osv.osv):
         _logger = logging.getLogger(__name__)
         self.allow_reopen(cr, uid, ids, context=None)
         move_line_obj = self.pool.get('stock.move')
-        account_move_line_obj = self.pool.get('account.move.line')
         account_move_obj = self.pool.get('account.move')
         account_invoice_obj = self.pool.get('account.invoice')
         report_xml_obj = self.pool.get('ir.actions.report.xml')
@@ -113,12 +112,12 @@ class stock_picking(osv.osv):
             for ml in pick.move_lines:
                 ml_ids.append(ml.id)
                 if ml.product_id.valuation == 'real_time':
-                    ml_real_time_ids.append(ml.id)    
+                    ml_real_time_ids.append(ml.id)
             _logger.debug('FGF picking action reopen pick %s ' %(ml_ids)   )
             move_line_obj.write(cr, uid, ml_ids, {'state':'draft'})
             # we have to handle real time accounting stock moves
             if ml_real_time_ids:
-                #FIXME - performance, should be an id - link to picking 
+                #FIXME - performance, should be an id - link to picking
                 #aml_ids = account_move_line_obj.search(cr, uid, [('picking_id','=',pick.id)])
                 move_all_ids = account_move_obj.search(cr, uid, [('ref','=',pick.name)])
                 # FIXME ugly hack
@@ -148,12 +147,12 @@ class stock_picking(osv.osv):
                     cr.execute("""update account_move_line
                                     set debit=credit, credit=debit,
                                     ref = ref||'*'
-                                where move_id = %s;""" % (move_copy_id)) 
+                                where move_id = %s;""" % (move_copy_id))
             # rename attachments (reports)
             # for some reason datas_fname has .pdf.pdf extension
             report_ids = report_xml_obj.search(cr, uid, [('model','=', 'stock.picking'), ('attachment','!=', False)])
             for report in report_xml_obj.browse(cr, uid, report_ids):
-                if report.attachment: 
+                if report.attachment:
                     aname = report.attachment.replace('object','pick')
                     if eval(aname):
                         aname = eval(aname)+'.pdf'
@@ -170,14 +169,14 @@ class stock_picking(osv.osv):
 
             wf_service.trg_delete(uid, 'stock.picking', pick.id, cr)
             wf_service.trg_create(uid, 'stock.picking', pick.id, cr)
-  
-            
+
+
         return True
-    
+
 
 
 #    def button_reopen(self, cr, uid, ids, context=None):
-#        _logger = logging.getLogger(__name__)   
+#        _logger = logging.getLogger(__name__)
 #        self.allow_reopen(cr, uid, ids, context)
 #        _logger.debug('FGF picking allow open  '   )
 #        self.write(cr, uid, ids, {'state':'draft'})
@@ -185,9 +184,9 @@ class stock_picking(osv.osv):
 #        self.log_picking(cr, uid, ids, context=context)
 #        _logger.debug('FGF picking log'   )
 
-        
-    
+
+
 stock_picking()
-    
+
 
 
